@@ -1,60 +1,63 @@
 import os
 from flask import Flask, request, jsonify
-import telegram
-from telegram import Update, Bot
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters
+import requests
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Your bot token
 TOKEN = "8234827256:AAHIMCUanq5uFRLXZMLoBb6TLQ49WVCmEsg"
-bot = Bot(token=TOKEN)
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# Start command handler
-def start(update, context):
-    user = update.effective_user
-    update.message.reply_text(f"Hello {user.first_name}! Your user ID is: `{user.id}`", parse_mode='Markdown')
+# Set webhook
+def set_webhook():
+    webhook_url = os.getenv('RENDER_EXTERNAL_URL') + '/webhook'
+    response = requests.get(f"{BASE_URL}/setWebhook?url={webhook_url}")
+    return response.json()
 
-# Help command handler
-def help_command(update, context):
-    update.message.reply_text("Just send any message and I'll reply with your user ID!")
-
-# Handle all messages
-def echo(update, context):
-    user = update.effective_user
-    update.message.reply_text(f"Your user ID is: `{user.id}`", parse_mode='Markdown')
-
-# Webhook handler
+# Handle webhook
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    # Create dispatcher
-    dispatcher = Dispatcher(bot, None, workers=0)
+    data = request.get_json()
     
-    # Add handlers
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
-    
-    # Process the update
-    update = Update.de_json(request.get_json(), bot)
-    dispatcher.process_update(update)
+    # Extract message data
+    if 'message' in data:
+        chat_id = data['message']['chat']['id']
+        user_id = data['message']['from']['id']
+        first_name = data['message']['from'].get('first_name', '')
+        
+        # Check if it's a command
+        if 'text' in data['message']:
+            text = data['message']['text']
+            
+            if text.startswith('/start'):
+                message = f"Hello {first_name}! Your user ID is: `{user_id}`"
+                send_message(chat_id, message)
+            elif text.startswith('/help'):
+                message = "Just send any message and I'll reply with your user ID!"
+                send_message(chat_id, message)
+            else:
+                message = f"Your user ID is: `{user_id}`"
+                send_message(chat_id, message)
     
     return jsonify({"status": "ok"})
 
-# Set webhook
+# Send message function
+def send_message(chat_id, text):
+    url = f"{BASE_URL}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    response = requests.post(url, json=payload)
+    return response.json()
+
+# Set webhook endpoint
 @app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    # Get the Render URL from environment variable
-    webhook_url = os.getenv('RENDER_EXTERNAL_URL') + '/webhook'
-    
-    # Set the webhook
-    success = bot.set_webhook(webhook_url)
-    
-    if success:
-        return jsonify({"message": f"Webhook set successfully: {webhook_url}"})
-    else:
-        return jsonify({"message": "Webhook setup failed"}), 500
+def set_webhook_route():
+    result = set_webhook()
+    return jsonify(result)
 
 # Home page
 @app.route('/')
